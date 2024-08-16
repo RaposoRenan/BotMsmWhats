@@ -6,8 +6,9 @@ import pyautogui
 import os
 import threading
 import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox
+from tkinter import filedialog, messagebox
 from datetime import datetime
+
 
 def enviar_mensagem_whatsapp(nome, telefone, mensagem, imagem, tempo_espera):
     try:
@@ -29,130 +30,144 @@ def enviar_mensagem_whatsapp(nome, telefone, mensagem, imagem, tempo_espera):
             arquivo.write(f'{nome},{telefone}{os.linesep}')
         return False
 
+
+def processar_planilhas(filename, workbook_enviados, pagina_clientes, mensagem_padrao, imagem, tempo_espera,
+                        continuar_execucao, horario_encerramento, paused):
+    pagina_enviados = workbook_enviados.active
+    pagina_enviados.title = 'Sheet1'
+
+    # Copiar cabeçalho se a planilha _enviados estiver vazia
+    if pagina_enviados.max_row == 1:
+        for cell in pagina_clientes[1]:
+            pagina_enviados[cell.column_letter + '1'] = cell.value
+
+    row_to_delete = []
+
+    for linha in pagina_clientes.iter_rows(min_row=2, values_only=False):
+        if not continuar_execucao[0]:
+            break
+        if paused[0]:
+            print("Programa pausado. Pressione 'c' para continuar ou 'q' para sair.")
+            while paused[0]:
+                sleep(1)
+                if not continuar_execucao[0]:
+                    break
+            print("Continuando a execução...")
+        if horario_encerramento and datetime.now() >= horario_encerramento:
+            print("Horário de encerramento atingido. Encerrando o programa.")
+            break
+        nome = linha[0].value
+        telefone = linha[1].value
+
+        if nome is None or telefone is None:
+            print("Encontrado valor None. Encerrando o programa.")
+            break
+
+        print(f'Enviando mensagem para {nome} ({telefone})...')
+        sucesso = enviar_mensagem_whatsapp(nome, telefone, mensagem_padrao, imagem, tempo_espera)
+        if sucesso:
+            nova_linha = [cell.value for cell in linha]
+            pagina_enviados.append(nova_linha)
+            row_to_delete.append(linha[0].row)
+
+    for row in sorted(row_to_delete, reverse=True):
+        pagina_clientes.delete_rows(row)
+
+    workbook_enviados.save(os.path.splitext(filename)[0] + '_enviados.xlsx')
+    # Mova o salvamento do workbook principal para a função `main` após o término do processamento
+    return True
+
+
 def main():
+    paused = [False]  # Use uma lista para que possa ser modificado dentro de funções internas
+    continuar_execucao = [True]  # Use uma lista para que possa ser modificado dentro de funções internas
     workbook = None
     pagina_clientes = None
     mensagem_padrao = None
     imagem = None
-    continuar_execucao = True
-    paused = False
     tempo_espera = 60  # Valor padrão de 60 segundos
     horario_encerramento = None  # Horário de encerramento do programa
     workbook_enviados = None
-    pagina_enviados = None
-    filename = None  # Adicionado para armazenar o nome do arquivo
+    filename = None
 
     def worker():
-        nonlocal paused
         nonlocal workbook
         nonlocal pagina_clientes
         nonlocal mensagem_padrao
         nonlocal imagem
         nonlocal tempo_espera
-        nonlocal continuar_execucao
         nonlocal horario_encerramento
         nonlocal workbook_enviados
-        nonlocal pagina_enviados
-        nonlocal filename  # Usar a variável filename
+        nonlocal filename
+        nonlocal continuar_execucao
+        nonlocal paused
 
         if workbook is None or pagina_clientes is None or mensagem_padrao is None or imagem is None:
-            messagebox.showerror("Erro", "Por favor, selecione o arquivo, insira a mensagem e selecione a imagem antes de iniciar.")
+            messagebox.showerror("Erro",
+                                 "Por favor, selecione o arquivo, insira a mensagem e selecione a imagem antes de iniciar.")
             return
 
-        # Abrir ou criar a planilha _enviados
         enviados_filename = os.path.splitext(filename)[0] + '_enviados.xlsx'
         if os.path.exists(enviados_filename):
             workbook_enviados = openpyxl.load_workbook(enviados_filename)
         else:
             workbook_enviados = openpyxl.Workbook()
-        pagina_enviados = workbook_enviados.active
-        pagina_enviados.title = 'Sheet1'
 
-        # Copiar cabeçalho se a planilha _enviados estiver vazia
-        if pagina_enviados.max_row == 1:
-            for cell in pagina_clientes[1]:
-                pagina_enviados[cell.column_letter + '1'] = cell.value
+        sucesso = processar_planilhas(filename, workbook_enviados, pagina_clientes, mensagem_padrao, imagem,
+                                      tempo_espera, continuar_execucao, horario_encerramento, paused)
 
-        for linha in pagina_clientes.iter_rows(min_row=2, values_only=False):
-            if not continuar_execucao:
-                break
-            if paused:
-                print("Programa pausado. Pressione 'c' para continuar ou 'q' para sair.")
-                while paused:
-                    sleep(1)
-                    if not continuar_execucao:
-                        break
-                print("Continuando a execução...")
-            if horario_encerramento and datetime.now() >= horario_encerramento:
-                print("Horário de encerramento atingido. Encerrando o programa.")
-                break
-            nome = linha[0].value
-            telefone = linha[1].value
+        if sucesso:
+            workbook.save(filename)
 
-            if nome is None or telefone is None:
-                print("Encontrado valor None. Encerrando o programa.")
-                break
-
-            sucesso = enviar_mensagem_whatsapp(nome, telefone, mensagem_padrao, imagem, tempo_espera)
-            if sucesso:
-                # Adicionar linha à planilha _enviados
-                nova_linha = [cell.value for cell in linha]
-                pagina_enviados.append(nova_linha)
-                # Apagar linha da planilha original
-                pagina_clientes.delete_rows(linha[0].row)
-
-        # Salvar a planilha original e a planilha _enviados
-        workbook.save(filename)
-        workbook_enviados.save(enviados_filename)
-
-        # Encerrar o programa quando a lista de números for concluída ou horário de encerramento atingido
-        continuar_execucao = False
+        continuar_execucao[0] = False
         control_window.quit()
 
     thread = threading.Thread(target=worker)
 
     def pause_program():
-        nonlocal paused
-        paused = True
+        paused[0] = True
 
     def continue_program():
-        nonlocal paused
-        paused = False
+        paused[0] = False
 
     def quit_program():
-        nonlocal continuar_execucao
-        continuar_execucao = False
-        paused = False
+        continuar_execucao[0] = False
+        paused[0] = False
         control_window.quit()
 
     def select_file():
         nonlocal workbook
         nonlocal pagina_clientes
-        nonlocal filename  # Usar a variável filename
+        nonlocal filename
         filename = filedialog.askopenfilename(initialdir="/", title="Selecione o arquivo",
                                               filetypes=(("xlsx files", "*.xlsx"), ("all files", "*.*")))
         if filename:
             workbook = openpyxl.load_workbook(filename)
             pagina_clientes = workbook['Sheet1']
+            print(f'Arquivo {filename} selecionado.')
 
     def input_message():
         nonlocal mensagem_padrao
         dialog = tk.Toplevel(root)
         dialog.title("Digite a mensagem")
-        text = tk.Text(dialog, width=50, height=20)  # Ajuste a largura e a altura conforme necessário
+        text = tk.Text(dialog, width=50, height=20)
         text.pack()
-        ok_button = tk.Button(dialog, text="OK", command=lambda: set_message(text.get("1.0", "end-1c"), dialog))
+        ok_button = tk.Button(dialog, text="OK", command=lambda: set_message(text, dialog))
         ok_button.pack()
 
-    def set_message(message, dialog):
+    def set_message(text_widget, dialog):
         nonlocal mensagem_padrao
-        mensagem_padrao = message
+        mensagem_padrao = text_widget.get("1.0", "end-1c")
         dialog.destroy()
+        print('Mensagem definida.')
 
     def select_image():
         nonlocal imagem
         imagem = filedialog.askopenfilename(initialdir="/", title="Selecione a imagem",
-                                            filetypes=(("png files", "*.png"), ("jpeg files", "*.jpg"), ("all files", "*.*")))
+                                            filetypes=(
+                                            ("png files", "*.png"), ("jpeg files", "*.jpg"), ("all files", "*.*")))
+        if imagem:
+            print(f'Imagem {imagem} selecionada.')
 
     def start_program():
         nonlocal thread
@@ -171,10 +186,12 @@ def main():
                 messagebox.showerror("Erro", "Por favor, insira um horário válido no formato HH:MM.")
                 return
         if workbook is None or pagina_clientes is None or mensagem_padrao is None or imagem is None:
-            messagebox.showerror("Erro", "Por favor, selecione o arquivo, insira a mensagem e selecione a imagem antes de iniciar.")
+            messagebox.showerror("Erro",
+                                 "Por favor, selecione o arquivo, insira a mensagem e selecione a imagem antes de iniciar.")
             return
         root.destroy()
-        control_window.deiconify()  # Mostra a janela de controle
+        control_window.deiconify()
+        print('Iniciando o programa...')
         thread.start()
 
     root = tk.Tk()
@@ -191,7 +208,7 @@ def main():
 
     tk.Label(root, text="Tempo de Espera (segundos):").pack()
     entry_tempo_espera = tk.Entry(root)
-    entry_tempo_espera.insert(0, "60")  # Valor padrão de 60 segundos
+    entry_tempo_espera.insert(0, "60")
     entry_tempo_espera.pack()
 
     tk.Label(root, text="Horário de Encerramento (HH:MM):").pack()
@@ -201,10 +218,9 @@ def main():
     start_button = tk.Button(root, text="Iniciar", command=start_program)
     start_button.pack()
 
-    # Inicializa a janela de controle, mas não mostra ainda
     control_window = tk.Tk()
     control_window.title("Controle do Programa")
-    control_window.withdraw()  # Esconde a janela de controle inicialmente
+    control_window.withdraw()
 
     pause_button = tk.Button(control_window, text="Pausar", command=pause_program)
     pause_button.pack()
@@ -217,23 +233,12 @@ def main():
 
     root.mainloop()
 
-    while continuar_execucao:
-        if not paused:
-            opcao = input("Digite 'p' para pausar: ").lower()
-            if opcao == 'p':
-                paused = True
-        else:
-            opcao = input("Programa pausado. Digite 'c' para continuar ou 'q' para sair: ").lower()
-            if opcao == 'c':
-                paused = False
-            elif opcao == 'q':
-                continuar_execucao = False
-                paused = False
-            else:
-                print("Opção inválida. Por favor, digite 'c' ou 'q'.")
+    while continuar_execucao[0]:
+        control_window.update()
+        sleep(0.1)
 
-    thread.join()
-    print("Programa encerrado.")
+    print('Programa encerrado.')
+
 
 if __name__ == "__main__":
     main()
